@@ -20,6 +20,9 @@
 
 #include "git2/odb_backend.h"
 
+/* re-freshen pack files no more than every 2 seconds */
+#define FRESHEN_FREQUENCY 2
+
 struct pack_backend {
 	git_odb_backend parent;
 	git_vector packs;
@@ -367,12 +370,28 @@ static int pack_backend__freshen(
 	git_odb_backend *backend, const git_oid *oid)
 {
 	struct git_pack_entry e;
+	struct timeval times[2];
+	time_t now;
 	int error;
 
 	if ((error = pack_entry_find(&e, (struct pack_backend *)backend, oid)) < 0)
 		return error;
 
-	return git_futils_touch(e.p->pack_name);
+	now = time(NULL);
+
+	if (e.p->last_freshen > now - FRESHEN_FREQUENCY)
+		return 0;
+
+	times[0].tv_sec = now;
+	times[0].tv_usec = 0;
+	times[1].tv_sec = now;
+	times[1].tv_usec = 0;
+
+	if ((error = p_utimes(e.p->pack_name, times)) < 0)
+		return git_path_set_error(errno, e.p->pack_name, "touch");
+
+	e.p->last_freshen = now;
+	return 0;
 }
 
 static int pack_backend__read(
